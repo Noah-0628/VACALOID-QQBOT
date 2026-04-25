@@ -1,7 +1,7 @@
 import requests
 
 # ===== 请替换为你的真实 API Key =====
-API_KEY = "70f047de5f7f4fb8b8f9bf45cf9d4f31.bSFwkMbWvnN6kWOc"
+API_KEY = ""
 
 URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
 headers = {
