@@ -1,14 +1,17 @@
 # generate_style_profile_ai.py
 import sqlite3
 import os
-import httpx
 import time
+import requests
+from nonebot import logger  # 使用 nonebot 的日志
 
-# 配置
+# ===================== 配置 =====================
 DB_PATH = r"E:\qqbot\qqbot\plugins\cache\data\chat_history.db"
 OUTPUT_PATH = r"E:\qqbot\qqbot\plugins\cache\data\style_profile.txt"
-ZHIPU_API_KEY = "70f047de5f7f4fb8b8f9bf45cf9d4f31.bSFwkMbWvnN6kWOc" # 或从环境变量读取
+ZHIPU_API_KEY = "70f047de5f7f4fb8b8f9bf45cf9d4f31.bSFwkMbWvnN6kWOc"  # 你的智谱密钥
 ZHIPU_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+ZHIPU_MODEL = "GLM-4-Flash"
+
 SYSTEM_PROMPT = (
     "你是一个群聊风格分析专家。你会收到一段群聊记录（每条一行）。\n"
     "请从中提取这个群的说话风格，包括：\n"
@@ -29,60 +32,58 @@ SYSTEM_PROMPT = (
     "- 模拟的拟人语气"
 )
 
-def load_recent_messages(db_path, days=7, limit=200):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    since = time.time() - days * 86400
-    cursor.execute(
-        "SELECT content FROM messages WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT ?",
-        (since, limit)
-    )
-    rows = cursor.fetchall()
-    conn.close()
-    return [row[0] for row in rows if row[0].strip()]
+# ===================== 核心函数 =====================
+def load_recent_messages(db_path: str, days: int = 7, limit: int = 200) -> list:
+    """读取最近 days 天内的最近 limit 条消息内容"""
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        since = time.time() - days * 86400
+        cursor.execute(
+            "SELECT content FROM messages WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT ?",
+            (since, limit)
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        return [row[0] for row in rows if row[0].strip()]
+    except Exception as e:
+        logger.error(f"读取数据库失败: {e}")
+        return []
 
-def call_zhipu(messages):
+def call_zhipu(messages: list) -> str:
+    """调用智谱 GLM-4.7-Flash 同步请求，返回生成的文本"""
     headers = {
         "Authorization": f"Bearer {ZHIPU_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": "GLM-4-Flash",
+        "model": ZHIPU_MODEL,
         "messages": messages,
         "max_tokens": 500,
         "temperature": 0.3
     }
-    import asyncio
-    import httpx
-    async def _call():
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(ZHIPU_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
-    # 简单同步调用（可用 asyncio.run 或直接运行事件循环）
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # 如果有运行中的事件循环，用 create_task 不太方便，这里直接用 requests 替代
-            import requests
-            resp = requests.post(ZHIPU_URL, json=payload, headers=headers, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
-        else:
-            return asyncio.run(_call())
-    except:
+        resp = requests.post(ZHIPU_URL, json=payload, headers=headers, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"].strip()
+    except requests.exceptions.RequestException as e:
+        logger.error(f"智谱 API 请求失败: {e}")
+        return ""
+    except KeyError:
+        logger.error(f"智谱 API 返回异常: {resp.text}")
         return ""
 
 def generate_style():
+    """主逻辑：提取风格并写入 style_profile.txt"""
+    logger.info("开始生成群聊风格档案...")
     texts = load_recent_messages(DB_PATH, days=7, limit=200)
     if len(texts) < 5:
-        print("消息太少，无法生成风格档案")
+        logger.warning("消息太少（<5条），无法生成风格档案")
         return
 
-    # 拼接成一段文本（每条消息一行，截短避免太长）
-    chat_text = "\n".join(texts[:200])  # 最多200条，每条约30字，共~6000字符，约3000-5000 token
+    # 拼接消息，限制总长度避免 token 爆炸
+    chat_text = "\n".join(texts[:200])
     if len(chat_text) > 6000:
         chat_text = chat_text[:6000]
 
@@ -93,15 +94,17 @@ def generate_style():
 
     result = call_zhipu(messages)
     if not result:
-        print("调用智谱 API 失败")
+        logger.error("调用智谱 API 失败，风格档案生成中断")
         return
 
+    # 确保输出目录存在
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
         f.write(result)
-    print(f"风格档案已保存至 {OUTPUT_PATH}")
-    print("===== 生成内容 =====")
-    print(result)
 
+    logger.info(f"风格档案已保存至 {OUTPUT_PATH}")
+    logger.info(f"生成内容:\n{result}")
+
+# 支持直接运行此脚本
 if __name__ == "__main__":
     generate_style()

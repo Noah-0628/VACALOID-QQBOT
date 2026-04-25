@@ -22,4 +22,4 @@ nonebot-adapter-onebot = [
 
 [tool.nonebot.plugins]
 "@local" = []
-nonebot-plugin-jm = ["nonebot_plugin_jm"]
+plugins = ["nonebot_plugin_apscheduler", "nonebot_plugin_jm"]
